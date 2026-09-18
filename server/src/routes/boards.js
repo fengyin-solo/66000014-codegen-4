@@ -73,7 +73,9 @@ router.post('/', async (req, res) => {
 // Update a board
 router.put('/:id', async (req, res) => {
   try {
-    const board = await Board.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // Members and comments are managed only through dedicated permission routes.
+    const { members, comments, collaborators, ownerId, ...allowed } = req.body;
+    const board = await Board.findByIdAndUpdate(req.params.id, allowed, { new: true });
     if (!board) return res.status(404).json({ error: 'Board not found' });
     res.json(board);
   } catch (err) {

@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { CursorPosition, BoardElement, Layer, CanvasTransform } from '../types';
+import { CursorPosition, BoardElement, Layer, CanvasTransform, PermissionState, BoardComment, BoardMember } from '../types';
 
 const SERVER_URL = '/';
 
@@ -30,9 +30,9 @@ class SocketService {
     this.boardId = null;
   }
 
-  joinBoard(boardId: string, username: string): void {
+  joinBoard(boardId: string, username: string, userId: string): void {
     this.boardId = boardId;
-    this.socket?.emit('join-board', { boardId, username });
+    this.socket?.emit('join-board', { boardId, username, userId });
   }
 
   moveCursor(x: number, y: number): void {
@@ -77,6 +77,12 @@ class SocketService {
     }
   }
 
+  broadcastComment(comment: BoardComment): void {
+    if (this.boardId) {
+      this.socket?.emit('add-comment', { boardId: this.boardId, comment });
+    }
+  }
+
   canvasTransform(transform: CanvasTransform): void {
     if (this.boardId) {
       this.socket?.emit('canvas-transform', { boardId: this.boardId, transform });
@@ -97,6 +103,22 @@ class SocketService {
 
   onCursorUpdate(callback: (data: CursorPosition) => void): void {
     this.socket?.on('cursor-update', callback);
+  }
+
+  onPermissionState(callback: (state: PermissionState) => void): void {
+    this.socket?.on('permission-state', callback);
+  }
+
+  onPermissionDenied(callback: (data: { action: string; message: string }) => void): void {
+    this.socket?.on('permission-denied', callback);
+  }
+
+  onMembersChanged(callback: (data: { boardId: string; members: BoardMember[] }) => void): void {
+    this.socket?.on('members-changed', callback);
+  }
+
+  onBoardError(callback: (data: { message: string }) => void): void {
+    this.socket?.on('board-error', callback);
   }
 
   onElementAdded(callback: (data: { element: BoardElement; layerIndex: number }) => void): void {
@@ -121,6 +143,19 @@ class SocketService {
 
   onLayersUpdated(callback: (data: { layers: Layer[] }) => void): void {
     this.socket?.on('layers-updated', callback);
+  }
+
+  onCommentAdded(callback: (data: { boardId?: string; comment: BoardComment }) => void): void {
+    // REST fan-out reaches everyone (incl. author); socket fan-out covers
+    // peers. Deduplication by comment id happens at the call site.
+    this.socket?.on('comment-added-broadcast', callback);
+    this.socket?.on('comment-added-live', (d: { comment: BoardComment }) =>
+      callback({ comment: d.comment })
+    );
+  }
+
+  onCommentDeleted(callback: (data: { boardId?: string; commentId: string }) => void): void {
+    this.socket?.on('comment-deleted', callback);
   }
 
   onCanvasTransformed(callback: (data: { transform: CanvasTransform }) => void): void {

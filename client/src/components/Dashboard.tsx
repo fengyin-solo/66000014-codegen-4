@@ -35,11 +35,32 @@ const getRandomGradient = (index: number): string => {
   return gradients[index % gradients.length];
 };
 
+const ROLE_PILL: Record<string, { label: string; color: string; bg: string }> = {
+  editor: { label: '可编辑', color: '#1d4ed8', bg: '#dbeafe' },
+  commenter: { label: '可评论', color: '#b45309', bg: '#fef3c7' },
+  viewer: { label: '仅查看', color: '#6b7280', bg: '#f3f4f6' },
+  removed: { label: '只读（已移出）', color: '#b91c1c', bg: '#fee2e2' },
+};
+
+// Resolve the current user's effective role on a shared board.
+const getMyRole = (board: Board, currentUserId: string): string | null => {
+  if (board.ownerId === currentUserId) return null;
+  const member = (board.members || []).find((m) => m.userId === currentUserId);
+  if (member) return member.status === 'removed' ? 'removed' : member.role;
+  // Legacy boards without member records: collaborators were editors.
+  if (board.collaborators.includes(currentUserId)) return 'editor';
+  return null;
+};
+
 const BoardCard: React.FC<{
   board: Board;
   index: number;
+  currentUserId: string;
   onClick: () => void;
-}> = ({ board, index, onClick }) => {
+}> = ({ board, index, currentUserId, onClick }) => {
+  const myRole = getMyRole(board, currentUserId);
+  const pill = myRole ? ROLE_PILL[myRole] : null;
+
   return (
     <div
       onClick={onClick}
@@ -105,24 +126,40 @@ const BoardCard: React.FC<{
           }}
         >
           <span>{formatDate(board.updatedAt)}</span>
-          {board.collaborators.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {pill && (
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: pill.color,
+                  background: pill.bg,
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                }}
               >
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-              <span>{board.collaborators.length + 1}</span>
-            </div>
-          )}
+                {pill.label}
+              </span>
+            )}
+            {board.collaborators.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
+                <span>{board.collaborators.length + 1}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -278,6 +315,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
             key={board._id}
             board={board}
             index={index}
+            currentUserId={userId}
             onClick={() => onBoardSelect(board)}
           />
         ))}

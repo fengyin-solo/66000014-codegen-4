@@ -22,11 +22,60 @@ export interface Layer {
   elements: BoardElement[];
 }
 
+export type MemberRole = 'viewer' | 'commenter' | 'editor';
+export type MemberStatus = 'invited' | 'active' | 'removed';
+export type EffectiveRole = 'owner' | MemberRole | 'removed' | 'unknown';
+
+export interface BoardMember {
+  userId: string;
+  role: MemberRole;
+  status: MemberStatus;
+  invitedAt?: string;
+  joinedAt?: string | null;
+  removedAt?: string;
+}
+
+export interface BoardComment {
+  _id: string;
+  userId: string;
+  username: string;
+  text: string;
+  x: number;
+  y: number;
+  resolved?: boolean;
+  createdAt: string;
+}
+
+export interface AccessInfo {
+  boardId: string;
+  userId: string;
+  role: EffectiveRole;
+  roleLabel: string;
+  canOpen: boolean;
+  canEdit: boolean;
+  canComment: boolean;
+  readOnly: boolean;
+  memberCount: number;
+}
+
+export interface PermissionState {
+  boardId: string;
+  userId: string;
+  role: EffectiveRole;
+  roleLabel: string;
+  readOnly: boolean;
+  canEdit: boolean;
+  canComment: boolean;
+  members: BoardMember[];
+}
+
 export interface Board {
   _id: string;
   name: string;
   ownerId: string;
   collaborators: string[];
+  members?: BoardMember[];
+  comments?: BoardComment[];
   layers: Layer[];
   width: number;
   height: number;

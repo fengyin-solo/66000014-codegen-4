@@ -12,7 +12,7 @@ export const WhiteboardCanvas: React.FC = () => {
 
   const {
     board, activeTool, strokeColor, fillColor, strokeWidth,
-    canvasTransform, addElement
+    canvasTransform, addElement, canEdit, setPermissionMessage, comments,
   } = useWhiteboardStore();
 
   const getCanvasPoint = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -26,23 +26,35 @@ export const WhiteboardCanvas: React.FC = () => {
   }, [canvasTransform]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canEdit()) {
+      // Viewers/commenters can pan/inspect but never start a drawing gesture.
+      return;
+    }
     const point = getCanvasPoint(e);
     isDrawingRef.current = true;
     startPosRef.current = point;
     currentPathRef.current = [point.x, point.y];
-  }, [getCanvasPoint]);
+  }, [getCanvasPoint, canEdit]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getCanvasPoint(e);
     socketService.moveCursor(point.x, point.y);
 
     if (!isDrawingRef.current) return;
+    if (!canEdit()) {
+      isDrawingRef.current = false;
+      return;
+    }
     currentPathRef.current.push(point.x, point.y);
-  }, [getCanvasPoint]);
+  }, [getCanvasPoint, canEdit]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
+    if (!canEdit()) {
+      setPermissionMessage('当前为只读模式，无法修改画板内容');
+      return;
+    }
     const point = getCanvasPoint(e);
     let element: BoardElement | null = null;
 
@@ -102,7 +114,7 @@ export const WhiteboardCanvas: React.FC = () => {
       addElement(element);
     }
     currentPathRef.current = [];
-  }, [activeTool, strokeColor, fillColor, strokeWidth, addElement, getCanvasPoint]);
+  }, [activeTool, strokeColor, fillColor, strokeWidth, addElement, getCanvasPoint, canEdit, setPermissionMessage]);
 
   // Render canvas
   useEffect(() => {
@@ -182,9 +194,27 @@ export const WhiteboardCanvas: React.FC = () => {
           ctx.restore();
         });
       });
+
+      // Comment markers (visible to everyone; never part of board content).
+      (comments || []).forEach((comment) => {
+        ctx.save();
+        ctx.fillStyle = '#f59e0b';
+        ctx.strokeStyle = '#b45309';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(comment.x, comment.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('!', comment.x, comment.y + 0.5);
+        ctx.restore();
+      });
     }
     ctx.restore();
-  }, [board, canvasTransform]);
+  }, [board, canvasTransform, comments]);
 
   // Handle wheel zoom
   useEffect(() => {
@@ -192,18 +222,25 @@ export const WhiteboardCanvas: React.FC = () => {
     if (!canvas) return;
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const { canvasTransform, setCanvasTransform } = useWhiteboardStore.getState();
+      const state = useWhiteboardStore.getState();
+      const { canvasTransform, setCanvasTransform, canEdit } = state;
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newScale = Math.min(Math.max(canvasTransform.scale * delta, 0.1), 5);
-      setCanvasTransform({
-        scale: newScale,
-        translateX: canvasTransform.translateX,
-        translateY: canvasTransform.translateY
-      });
+      // Viewers may zoom locally; their navigation must not move collaborators.
+      setCanvasTransform(
+        {
+          scale: newScale,
+          translateX: canvasTransform.translateX,
+          translateY: canvasTransform.translateY,
+        },
+        !canEdit()
+      );
     };
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', handleWheel);
-  }, []);
+  }, [canEdit]);
+
+  const editable = canEdit();
 
   return (
     <canvas
@@ -211,7 +248,7 @@ export const WhiteboardCanvas: React.FC = () => {
       style={{
         width: '100%',
         height: '100%',
-        cursor: activeTool === 'select' ? 'default' : 'crosshair',
+        cursor: !editable ? 'grab' : activeTool === 'select' ? 'default' : 'crosshair',
         backgroundColor: board?.backgroundColor || '#f5f5f5'
       }}
       onMouseDown={handleMouseDown}

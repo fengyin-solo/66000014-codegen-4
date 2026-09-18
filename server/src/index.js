@@ -3,7 +3,7 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { setupSocketHandlers } = require('./socket/handlers');
+const { setupSocketHandlers, broadcastMembersChanged } = require('./socket/handlers');
 const { initStorage } = require('./storage');
 
 const app = express();
@@ -21,10 +21,16 @@ const io = new Server(httpServer, {
 // Initialize local file storage
 initStorage();
 
+// Expose the Socket.IO server to REST routes for permission broadcasts.
+app.set('io', io);
+app.set('broadcastMembersChanged', (board) => broadcastMembersChanged(io, board));
+
 // Routes
 const boardRoutes = require('./routes/boards');
+const memberRoutes = require('./routes/members');
 const templateRoutes = require('./routes/templates');
 app.use('/api/boards', boardRoutes);
+app.use('/api/boards', memberRoutes);
 app.use('/api/templates', templateRoutes);
 
 // Health check

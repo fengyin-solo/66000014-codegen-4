@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { normalizeMembers, activeMemberUserIds } = require('./permissions');
 
 const DATA_DIR = path.join(__dirname, '../data');
 const BOARDS_FILE = path.join(DATA_DIR, 'boards.json');
@@ -35,12 +36,22 @@ const writeBoards = (boards) => {
   }
 };
 
+const hydrateBoard = (board) => {
+  if (!board) return board;
+  const hydrated = new LocalBoard(board);
+  hydrated.createdAt = board.createdAt || hydrated.createdAt;
+  return hydrated.toObject();
+};
+
 class LocalBoard {
   constructor(data) {
     this._id = data._id || uuidv4();
     this.name = data.name || 'Untitled Board';
     this.ownerId = data.ownerId;
-    this.collaborators = data.collaborators || [];
+    this.members = normalizeMembers(data.members, this.ownerId, data.collaborators);
+    // collaborators stays populated for backward compatibility with existing clients.
+    this.collaborators = activeMemberUserIds(this.members);
+    this.comments = data.comments || [];
     this.layers = data.layers || [{ name: 'Layer 1', visible: true, locked: false, order: 0, elements: [] }];
     this.width = data.width || 3000;
     this.height = data.height || 2000;
@@ -54,7 +65,9 @@ class LocalBoard {
       _id: this._id,
       name: this.name,
       ownerId: this.ownerId,
+      members: this.members,
       collaborators: this.collaborators,
+      comments: this.comments,
       layers: this.layers,
       width: this.width,
       height: this.height,
@@ -91,7 +104,12 @@ class LocalBoard {
             return board.ownerId === condition.ownerId;
           }
           if (condition.collaborators !== undefined) {
-            return board.collaborators && board.collaborators.includes(condition.collaborators);
+            const userId = condition.collaborators;
+            if (board.collaborators && board.collaborators.includes(userId)) return true;
+            // Boards shared via the new member model (active members only).
+            return (board.members || []).some(
+              (m) => m.userId === userId && m.status !== 'removed'
+            );
           }
           return true;
         });
@@ -101,6 +119,9 @@ class LocalBoard {
     } else if (query._id !== undefined) {
       result = result.filter((b) => b._id === query._id);
     }
+
+    // Normalize any legacy records (add members/comments, sync collaborators).
+    result = result.map((b) => hydrateBoard(b));
 
     result.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
@@ -117,7 +138,21 @@ class LocalBoard {
   static async findById(id) {
     const boards = readBoards();
     const board = boards.find((b) => b._id === id);
-    return board || null;
+    return board ? hydrateBoard(board) : null;
+  }
+
+  // Persist a fully-formed board object (members, comments, layers, ...).
+  static async persist(boardData) {
+    const boards = readBoards();
+    const index = boards.findIndex((b) => b._id === boardData._id);
+    const next = { ...hydrateBoard(boardData), updatedAt: new Date().toISOString() };
+    if (index >= 0) {
+      boards[index] = next;
+    } else {
+      boards.unshift(next);
+    }
+    writeBoards(boards);
+    return next;
   }
 
   static async findByIdAndUpdate(id, updates, options = {}) {
@@ -128,11 +163,11 @@ class LocalBoard {
       return null;
     }
 
-    boards[index] = {
+    boards[index] = hydrateBoard({
       ...boards[index],
       ...updates,
       updatedAt: new Date().toISOString(),
-    };
+    });
 
     writeBoards(boards);
     console.log(`[Storage] Updated board: ${id}`);
