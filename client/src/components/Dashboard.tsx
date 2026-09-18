@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Board } from '../types';
+import { Board, BoardAccess, AccessRole } from '../types';
 import { boardApi, templateApi } from '../services/api';
 import { useWhiteboardStore } from '../store/whiteboard';
+import { DEMO_USERS } from '../services/users';
 import { TemplateCenter } from './TemplateCenter';
 
 interface DashboardProps {
@@ -35,11 +36,29 @@ const getRandomGradient = (index: number): string => {
   return gradients[index % gradients.length];
 };
 
+const ROLE_BADGE: { role: AccessRole; label: string; color: string }[] = [
+  { role: 'owner', label: '我创建的', color: '#667eea' },
+  { role: 'editor', label: '可编辑', color: '#15803d' },
+  { role: 'commenter', label: '可评论', color: '#b45309' },
+  { role: 'viewer', label: '可查看', color: '#6b7280' },
+];
+
+const roleBadgeFor = (access?: BoardAccess) => {
+  if (!access) return null;
+  if (access.status === 'pending') {
+    return { label: '邀请待接受', color: '#a16207' };
+  }
+  return ROLE_BADGE.find((b) => b.role === access.role) || null;
+};
+
 const BoardCard: React.FC<{
   board: Board;
   index: number;
   onClick: () => void;
 }> = ({ board, index, onClick }) => {
+  const badge = roleBadgeFor(board.access);
+  const activeMembers = (board.members || []).filter((m) => m.status === 'active');
+
   return (
     <div
       onClick={onClick}
@@ -67,6 +86,7 @@ const BoardCard: React.FC<{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          position: 'relative',
         }}
       >
         <span
@@ -79,6 +99,23 @@ const BoardCard: React.FC<{
         >
           {board.name.charAt(0).toUpperCase()}
         </span>
+        {badge && (
+          <span
+            style={{
+              position: 'absolute',
+              top: '8px',
+              left: '8px',
+              fontSize: '10px',
+              fontWeight: 600,
+              color: '#fff',
+              background: badge.color,
+              padding: '2px 8px',
+              borderRadius: '10px',
+            }}
+          >
+            {badge.label}
+          </span>
+        )}
       </div>
       <div style={{ padding: '16px' }}>
         <h3
@@ -105,7 +142,7 @@ const BoardCard: React.FC<{
           }}
         >
           <span>{formatDate(board.updatedAt)}</span>
-          {board.collaborators.length > 0 && (
+          {activeMembers.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <svg
                 width="14"
@@ -120,7 +157,7 @@ const BoardCard: React.FC<{
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
                 <path d="M16 3.13a4 4 0 0 1 0 7.75" />
               </svg>
-              <span>{board.collaborators.length + 1}</span>
+              <span>{activeMembers.length + 1}</span>
             </div>
           )}
         </div>
@@ -133,18 +170,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [isTemplateCenterOpen, setIsTemplateCenterOpen] = useState(false);
+  const [boardIdInput, setBoardIdInput] = useState('');
+  const [openError, setOpenError] = useState<string | null>(null);
   const username = useWhiteboardStore((state) => state.username);
-
-  const userId = 'user-1';
+  const currentUserId = useWhiteboardStore((state) => state.currentUserId);
+  const setCurrentUser = useWhiteboardStore((state) => state.setCurrentUser);
 
   useEffect(() => {
     loadBoards();
-  }, []);
+    setOpenError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
 
   const loadBoards = async () => {
     try {
       setLoading(true);
-      const data = await boardApi.getBoards(userId);
+      const data = await boardApi.getBoards(currentUserId);
       setBoards(data);
     } catch (error) {
       console.error('Failed to load boards:', error);
@@ -157,9 +198,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
     try {
       let newBoard: Board | null = null;
       if (templateId) {
-        newBoard = await templateApi.createBoardFromTemplate(templateId, { name, ownerId: userId });
+        newBoard = await templateApi.createBoardFromTemplate(templateId, { name, ownerId: currentUserId });
       } else {
-        newBoard = await boardApi.createBoard({ name, ownerId: userId });
+        newBoard = await boardApi.createBoard({ name, ownerId: currentUserId });
       }
       if (newBoard) {
         await loadBoards();
@@ -173,8 +214,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
     }
   };
 
-  const myBoards = boards.filter((b) => b.ownerId === userId);
-  const sharedBoards = boards.filter((b) => b.ownerId !== userId);
+  // Open by ID (e.g. a shared link). Removed members / outsiders still open the
+  // board; the server resolves it to read-only mode with an explanation.
+  const handleOpenById = async () => {
+    const id = boardIdInput.trim();
+    if (!id) return;
+    setOpenError(null);
+    try {
+      const board = await boardApi.getBoard(id, currentUserId);
+      if (!board) {
+        setOpenError('未找到该画板');
+        return;
+      }
+      onBoardSelect(board);
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : '打开画板失败');
+    }
+  };
+
+  const myBoards = boards.filter((b) => b.ownerId === currentUserId);
+  const sharedBoards = boards.filter((b) => b.ownerId !== currentUserId);
   const recentBoards = [...boards].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
@@ -356,6 +415,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* Identity switcher: exercise every permission scenario */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#6b7280' }}>
+              当前身份
+              <select
+                value={currentUserId}
+                onChange={(e) => {
+                  const user = DEMO_USERS.find((u) => u.userId === e.target.value);
+                  if (user) setCurrentUser(user.userId, user.username);
+                }}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: '13px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                {DEMO_USERS.map((u) => (
+                  <option key={u.userId} value={u.userId}>{u.username}（{u.userId}）</option>
+                ))}
+              </select>
+            </label>
             <button
               onClick={() => setIsTemplateCenterOpen(true)}
               style={{
@@ -411,7 +493,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             borderRadius: '16px',
             padding: '40px',
-            marginBottom: '40px',
+            marginBottom: '28px',
             color: '#fff',
           }}
         >
@@ -428,7 +510,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
           <p style={{ margin: 0, fontSize: '15px', opacity: 0.9 }}>
             继续你的创作，或者开始一个新的白板
           </p>
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
             <button
               onClick={() => setIsTemplateCenterOpen(true)}
               style={{
@@ -451,7 +533,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ onBoardSelect }) => {
               </svg>
               新建白板
             </button>
+
+            {/* Open a shared board by ID: read-only notice applies if removed/uninvited */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                value={boardIdInput}
+                onChange={(e) => setBoardIdInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleOpenById(); }}
+                placeholder="输入画板 ID 打开（如 seed-board-1）"
+                style={{
+                  padding: '10px 14px',
+                  fontSize: '13px',
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.5)',
+                  outline: 'none',
+                  width: '240px',
+                }}
+              />
+              <button
+                onClick={handleOpenById}
+                style={{
+                  padding: '10px 18px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#fff',
+                  background: 'rgba(255,255,255,0.2)',
+                  border: '1px solid rgba(255,255,255,0.5)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                }}
+              >
+                打开
+              </button>
+            </div>
           </div>
+          {openError && (
+            <div style={{ marginTop: '12px', fontSize: '13px', color: '#fee2e2' }}>{openError}</div>
+          )}
         </div>
 
         <section style={{ marginBottom: '40px' }}>
